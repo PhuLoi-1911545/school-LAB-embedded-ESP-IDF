@@ -6,70 +6,160 @@
 #include "esp_timer.h"
 #include "esp_sleep.h"
 #include "sdkconfig.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/timers.h"
+
 #include "esp_system.h"
 #include "esp_spi_flash.h"
+
 #include "driver/gpio.h"
 #include "driver/uart.h"
 
-#define TIMER_1_MAX 10
-#define TIMER_2_MAX 5
-
-TimerHandle_t xTimer1;
-TimerHandle_t xTimer2;
+// #include "bootloader_random.h"
 
 
-void periodic_timer_callback(TimerHandle_t arg) {
-    const char *name = pcTimerGetTimerName(arg);
-    uint32_t count = (uint32_t)pvTimerGetTimerID(arg);
-    count ++;
 
-    if(strcmp(name,"Timer 1")) {
-        if(count > TIMER_1_MAX) {
-            printf("STOP Timer 1\n");
-            xTimerStop(arg,0);
+typedef struct
+{
+    uint8_t ID;
+    bool flag;
+} Data;
+
+xQueueHandle aQueue;
+
+void aReceptionTask();
+// void aRequest();
+void aProcess();
+void aOtherProcess();
+
+void app_main() {
+    aQueue = xQueueCreate(3, sizeof(Data));
+
+    xTaskCreate(
+        aReceptionTask,          /* Task function. */
+        "Queue Gateway",        /* String with name of task. */
+        10000,            /* Stack size in bytes. */
+        NULL,             /* Parameter passed as input of the task */
+        1,                /* Priority of the task. */
+        NULL                /* Task handle. */
+    );    
+
+    xTaskCreate(
+        aProcess,          /* Task function. */
+        "Inportant Process",        /* String with name of task. */
+        10000,            /* Stack size in bytes. */
+        NULL,             /* Parameter passed as input of the task */
+        0,                /* Priority of the task. */
+        NULL                /* Task handle. */
+    );    
+
+    xTaskCreate(
+        aOtherProcess,          /* Task function. */
+        "Other Process",        /* String with name of task. */
+        10000,            /* Stack size in bytes. */
+        NULL,             /* Parameter passed as input of the task */
+        0,                /* Priority of the task. */
+        NULL                /* Task handle. */
+    );    
+
+
+
+}
+
+void aReceptionTask() {
+    uint8_t count = 0;
+    const TickType_t aTicksToWait = pdMS_TO_TICKS(100);
+
+
+    while (1)
+    {
+        BaseType_t aStatus;
+        Data nData;
+        nData .ID = count;
+
+        if (count % 3 == 0) {
+            nData.flag = 1;
         }
         else {
-            printf("Timer 1 - Nhom 3 L01 - HCMUT K19\n");
-            vTimerSetTimerID(arg,(void*)count);
+            nData.flag = 0;
         }
-    }
-    else if (strcmp(name,"Timer 2")) {
-        if(count > TIMER_2_MAX) {
-            printf("STOP Timer 2\n");
-            xTimerStop(arg,0);
+
+        if (count % 5 == 0) {
+            aStatus = xQueueSendToFront(aQueue, &nData, aTicksToWait);
         }
         else {
-            printf("Timer 2 - Nhom 3 L01 - HCMUT K19\n");
-            vTimerSetTimerID(arg,(void*)count);
+            aStatus = xQueueSendToBack(aQueue, &nData, aTicksToWait);
         }
+
+        if (aStatus == pdPASS)
+        {
+            ;
+        }
+        else if (aStatus ==errQUEUE_FULL)
+        {
+            printf("Request with ID %d meet FULL queue\n", count);
+        }
+
+        ++count;
+        vTaskDelay(900/ portTICK_RATE_MS );
     }
+    vTaskDelete(NULL);
+    
+}
+
+void aProcess() {
+    BaseType_t aStatus;
+    const TickType_t aTicksToWait = pdMS_TO_TICKS(100);
+    Data nData;
+
+    while(1) {
+        aStatus = xQueuePeek(aQueue, &nData, aTicksToWait);
+
+        if (aStatus == pdPASS) {
+            if (nData.flag == 1) {
+                aStatus = xQueueReceive(aQueue, &nData, aTicksToWait);
+                if (aStatus == pdPASS)
+                {
+                    printf("Process Data with ID: %d and FLAG = 1\n", nData.ID);
+                }
+                else
+                {
+                    printf("Response: Cound not recieve data\n");
+                }
+            }
+        }
+        vTaskDelay(1500/ portTICK_RATE_MS);
+    }
+    vTaskDelete(NULL);
+    
 }
 
 
-void app_main(void)
-{
+void aOtherProcess() {
+    BaseType_t aStatus;
+    const TickType_t aTicksToWait = pdMS_TO_TICKS(100);
+    Data nData;
 
-    xTimer1 = xTimerCreate(
-        // NULL,          /* Task function. */
-        "Timer 1",        /* String with name of task. */
-        pdMS_TO_TICKS(2000),            /* Stack size in bytes. */
-        pdTRUE,             /* Parameter passed as input of the task */
-        0,                /* Priority of the task. */
-        periodic_timer_callback                /* Task handle. */
-    );            
+    while(1) {
+        aStatus = xQueuePeek(aQueue, &nData, aTicksToWait);
+
+        if (aStatus == pdPASS) {
+            if (nData.flag == 0) {
+                aStatus = xQueueReceive(aQueue, &nData, aTicksToWait);
+                if (aStatus == pdPASS)
+                {
+                    printf("Process Data with ID: %d and FLAG = 0\n", nData.ID);
+                }
+                else
+                {
+                    printf("Response: Cound not recieve data\n");
+                }
+            }
+        }
+        vTaskDelay(1500/ portTICK_RATE_MS);
+    }
+    vTaskDelete(NULL);
     
-    xTimer2 = xTimerCreate(
-        // NULL,          /* Task function. */
-        "Timer 2",        /* String with name of task. */
-        pdMS_TO_TICKS(3000),            /* Stack size in bytes. */
-        pdTRUE,             /* Parameter passed as input of the task */
-        0,                /* Priority of the task. */
-        periodic_timer_callback                /* Task handle. */
-    ); 
-
-    xTimerStart(xTimer1, 0);
-    xTimerStart(xTimer2,0);         
 }
